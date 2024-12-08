@@ -1,29 +1,77 @@
-## HUM OnChain Implementation:
+# Offchain 구현
 
-### init() 호출 시 해당 유저에게 HUM 5토큰이 민팅
-- 동일 유저가 여러 번 init 호출하면 추가 민팅 가능하므로, 1회만 허용
+이 README는 Express.js, Ethers.js, IPFS를 사용하여 구현된 Q&A 플랫폼 API 서버의 코드 구조와 각 코드 스니펫에 대한 설명을 제공합니다. 이 서버는 사용자 등록, 질문 및 답변 관리, 투표, 평판 시스템 등을 지원합니다. 현재는 완벽히 구현된 상황이 아니나, 별도의 추가 작업을 통해 구현할 수 있습니다.
 
-### 질문 생성(Ask):
-- 유저는 HUM 토큰을 지불(예: 1 HUM) 후 질문을 생성.
-- 질문은 (creator, ipfsHash, acceptedAnswerId, creationBlock)를 저장.
-- acceptedAnswerId는 처음엔 0 (아직 채택된 답변 없음)
-- creationBlock을 저장해서 3000 블록 후에 채택 프로세스 진행
+## API 엔드포인트
 
-### 질문 열람(View):
-- 다른 유저는 HUM 토큰을 지불(예: 1 HUM) 후 질문을 열람할 수 있다. 
-- 이 때 Verified 이벤트를 발생시켜 오프체인에서 감지 후 secret 공개. 
-- 열람한 유저에 대해 (viewer -> viewBlock) 저장. 이 블록넘버 기반으로 1000블록 내 vote 확인 필요.
+### 사용자 등록
+- **라우트:** `POST /users`
+- **설명:** 스마트 컨트랙트를 통해 HUM 토큰 초기화.
+- **결과:** HUM 토큰이 사용자 지갑에 발행됨.
 
-### 답변 작성(Answer):
-- 열람을 완료한 유저가, 해당 질문에 아직 채택된 답이 없고(acceptedAnswerId=0), HUM 지불(1 HUM) 후 답변을 달 수 있다.
-- 답변은 (responder, ipfsHash, votes, answerId) 등 저장. (문제에서 답변 내용 암호화x라 했지만, 여기서는 off-chain 관리 IPFS hash만 저장)
+### 사용자 정보 조회
+- **라우트:** `POST /users/info`
+- **입력:** 
+  ```json
+  { "address": "사용자의 이더리움 주소" }
+- **설명:** 사용자 지갑의 HUM 잔액, 허용량(allowance), 평판 점수 반환.
 
-### 투표(Vote):
-- 열람한 유저는 열람 후 1000블록 내에 vote 해야 한다(여기서는 vote 시 HUM 비용 없음으로 가정).
-- vote 하면 해당 answer의 votes 증가.
-- 오프체인에서 1000블록 내에 vote 안 하면 HUM 일부 회수는 오프체인 로직이므로 (transfer) 온체인에서는 그냥 뷰어 블록 기록만 남김.
+### 사용자 평판 조회
+- **라우트:** GET /users/:address/reputation
+- **설명:** 특정 사용자의 평판 점수 반환.
 
-### 채택(Accept):
-- 질문 생성 블록으로부터 3000블록 지난 후, cronCheckAndAccept(questionId)를 호출해 가장 많은 votes 받은 답변을 acceptedAnswerId로 지정. 이 로직은 오프체인 크론 잡 또는 keepers 등을 통해 일정 시점에 호출 가능.
+### 질문 등록
+- **라우트:** POST /questions
+- **입력:**
+  ```json
+  {"content": "질문 내용",
+    "userAddress": "사용자의 이더리움 주소"}
+- **설명:** 질문 내용을 IPFS에 저장하고, 질문 ID를 스마트 컨트랙트에 기록.
 
-※ 비용(질문 생성, 열람, 답변 작성)에 들어가는 HUM 토큰의 양은 예시로, 문제 요구사항에 맞게 조정 가능.
+### 질문 열람
+- **라우트:** GET /questions/:questionId
+- **설명:** 질문 내용과 답변 목록을 조회.
+- **IPFS 사용:** IPFS에서 질문과 답변 데이터를 가져와 디코딩.
+
+
+### 질문 정보 조회
+- **라우트:** POST /questions/info
+- **입력:**
+  ```json
+  {"questionId": "조회할 질문 ID"}
+- **설명:** 질문 생성자, 내용, 답변 수 등 메타데이터 반환.
+
+### 답변 등록
+- **라우트:** POST /answers
+- **입력:**
+  ```json
+  {"questionId": "질문 ID",
+  "content": "답변 내용",
+  "userAddress": "사용자의 이더리움 주소"}
+- **설명:** IPFS에 답변 내용을 저장하고 스마트 컨트랙트에 등록.
+
+### 답변 정보 조회
+- **라우트:** POST /answers/info
+- **입력:**
+  ```json
+  {"questionId": "질문 ID",
+    "answerId": "답변 ID"}
+- **설명:** 특정 답변의 작성자, 내용, 투표 수 반환.
+
+### 답변 투표
+- **라우트:** POST /answers/:questionId/:answerId/vote
+- **입력:**
+  ```json
+  {"voter": "투표자의 이더리움 주소"}
+- **설명:** 특정 답변에 투표하고 사용자의 평판 점수 업데이트.
+
+### 답변 채택
+- **라우트:** POST /questions/:questionId/accept
+- **입력:**
+  ```json
+  {"answerId": "채택할 답변 ID",
+    "accepter": "질문 작성자의 이더리움 주소"}
+- **설명:** 질문 작성자가 답변을 채택.
+- **기능:** 
+스마트 컨트랙트 호출로 채택 처리.
+답변 작성자의 평판 점수를 증가.
